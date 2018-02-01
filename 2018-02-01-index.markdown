@@ -1,0 +1,86 @@
+## Promise
+```js
+const p0 = new Promise((resolve, reject) => {
+  do_sth_maybe_async((err, res) => {
+    if (err) {
+      reject(err);
+    } else {
+      resolve(res);
+    }
+  });
+});
+
+const p1 = p0.then(f1);
+const p2 = p0.then(f2);
+
+const p4 = p0.then(f4);
+const p5 = p4.then(f5);
+```
+
+![示意图](promise/test_diagram.svg)
+
+## Generator
+
+```js
+const generatorFunc = function* generatorFunc() {
+  const v1 = yield 1;
+  console.log('from outside: ', v1);
+
+  const v2 = yield 2;
+  console.log('from outside: ', v2);
+
+  const v3 = yield 3;
+  console.log('from outside: ', v3);
+}
+
+const generatorObj = generatorFunc();
+console.log('from inside: ', generatorObj.next().value);
+console.log('from inside: ', generatorObj.next(11).value);
+console.log('from inside: ', generatorObj.next(12).value);
+console.log('from inside: ', generatorObj.next(13).value);
+
+```
+
+## 协程：yield promise
+
+```js
+const delay = (ms, v) =>
+  new Promise(resolve =>
+    setTimeout(() => resolve(v), ms));
+const asyncWork1 = () => delay(1000, 'work1 result');
+const asyncWork2 = () => delay(1000, 'work2 result');
+
+function* doWorks() {
+  try {
+    const res1 = yield asyncWork1()
+    console.log(res1);
+  } catch (e) {
+    console.log('error: ', e);
+    return;
+  }
+
+  try {
+    const res2 = yield asyncWork2()
+    console.log(res2);
+  } catch (e) {
+    console.log('error: ', e);
+    return;
+  }
+}
+
+function co(func, ...args) {
+  coImp(func(...args))
+}
+
+function coImp(g, value = undefined) {
+  const it = g.next(value);
+  if (it.done) {
+    return;
+  }
+  Promise.resolve(it.value)
+    .then(v => coImp(g, v));
+}
+```
+
+## redux
+## redux-saga
