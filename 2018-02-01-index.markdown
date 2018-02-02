@@ -80,7 +80,184 @@ function coImp(g, value = undefined) {
   Promise.resolve(it.value)
     .then(v => coImp(g, v));
 }
+
+```
+
+## async/await
+* 基于generator实现
+
+```js
+  async purchase(callback) {
+    const { iapRecordVendor, productId, isLoggedIn } = this.ctx;
+    const { savePayRecord, removePayRecord, getPayRecord } = iapRecordVendor;
+    // 先检查已保存的记录
+    let rec = null;
+    try {
+      rec = await getPayRecord.call(iapRecordVendor, productId);
+    } catch (e) {
+      console.error('getPayRecord failed, should not happen: ', e);
+    }
+
+    if (rec) {
+      if (rec.length !== 2) {
+        throw new Error('invalid pay record');
+      }
+
+      if (!isLoggedIn) {
+        return { code: 'RC_IAP_DID_SAVE_REC' };
+      }
+
+      let ret = null;
+      try {
+        ret = await callback({ product: rec[0], payment: rec[1], isRestored: true });
+      } catch (e) {
+        console.error(e);
+        return { code: 'RC_IAP_CALLBACK', error: e };
+      }
+
+      if (ret.code !== 'RC_OK') {
+        return { code: 'RC_IAP_CALLBACK' };
+      }
+
+      try {
+        await removePayRecord.call(iapRecordVendor, productId);
+      } catch (e) {
+        // fixme: any better way to handle this
+        console.error('removePayRecord failed, should not happen: ', e);
+      }
+      return ret;
+    }
+
+    let appStoreProduct = null;
+    try {
+      appStoreProduct = await this.getProduct();
+    } catch (e) {
+      console.error(e);
+      return { code: 'RC_IAP_GET_PRODUCT', error: e };
+    }
+
+    if (!appStoreProduct) {
+      return { code: 'RC_IAP_GET_PRODUCT' };
+    }
+
+    let payment = null;
+    try {
+      payment = await this.iapPay();
+    } catch (e) {
+      console.error(e);
+      return { code: 'RC_IAP_PURCHASE', error: e };
+    }
+
+    if (!payment) {
+      return { code: 'RC_IAP_PURCHASE' };
+    }
+
+    let callbackRes = null;
+    let errorRc = '';
+    try {
+      callbackRes = await callback({ product: appStoreProduct, payment });
+    } catch (e) {
+      console.error(e);
+      if (e && e.code) {
+        errorRc = e.code;
+      }
+    }
+
+    const { code, ...rest } = callbackRes || {};
+    if (isLoggedIn && code === 'RC_OK') {
+      return callbackRes;
+    }
+
+    // 提交失败了，或未登录
+    try {
+      await savePayRecord.call(iapRecordVendor, appStoreProduct, payment);
+      return {
+        ...rest,
+        code: isLoggedIn ? (code || errorRc || 'RC_IAP_CALLBACK') : 'RC_IAP_DID_SAVE_REC',
+      };
+    } catch (e) {
+      console.error(e);
+      return { code: 'RC_IAP_SAVE_REC', error: e };
+    }
+  }
 ```
 
 ## redux
+![redux](redux/redux.svg)
+
 ## redux-saga
+* 基于generator
+* 副作用（effect）
+    *  take: 等待action发出
+    *  put: 发起一个action
+    *  select: 返回redux store
+    *  call/fork: 同步/异步调用
+
+```js
+// 商品列表加载成功之后，获取对应的App Store数据
+export const watchRealExamCourseList = function* watchRealExamCourseList() {
+  for (;;) {
+    const { payload } = yield take(actions.realGetExamCourseList.success);
+    if (!isIOS) continue;
+    const { data } = payload;
+    const productIds = (data || []).reduce((res, it) => {
+      if (!it) return res;
+      const { products } = it;
+      if (!products) return res;
+      return res.concat(products.map(p => p.id));
+    }, []);
+
+    yield call(getCoursesFromAppstore, productIds);
+  }
+};
+
+```
+
+
+```js
+// 退出登录后，清除用户相关的数据
+export const watchClearAccount = function* watchClearAccount() {
+  for (;;) {
+    yield take(actions.clearAccount);
+    try {
+      yield call(storeAccount, {});
+      yield put(orderActions.purchaseState({}));
+      yield put(orderActions.realGetOrderList.reset({}));
+      yield put(orderActions.realCancelOrder.reset({}));
+      yield put(orderActions.realPostOrder.reset({}));
+      yield put(courseActions.realGetCourseStatus.reset({}));
+      yield put(courseActions.realPutCourseStudyStatus.reset({}));
+      yield put(courseActions.realGetMyCourseCards.reset({}));
+      yield put(courseActions.realGetMyCourseList.reset({}));
+      yield put(courseActions.realGetCourse.reset({}));
+      yield put(userActions.realGetStudyData.reset({}));
+    } catch (e) {
+      console.error('saga failed to clearAccount, error: ', e);
+    }
+  }
+};
+
+
+```
+
+
+```js
+// 支付成功后，刷新对应的页面：学习中心，课程详情页，订单列表页
+export const watchPurchaseState = function* watchPurchaseState() {
+  for (;;) {
+    const { payload: { status, courseId } } = yield take(actions.purchaseState);
+    if (status !== 'SUCCESS') {
+      continue;
+    }
+
+    try {
+      yield fork(put, courseActions.getMyCourseList());
+      yield fork(put, courseActions.getCourse({ id: courseId }));
+      yield fork(put, actions.getOrderList());
+    } catch (e) {
+      console.error(e);
+    }
+  }
+};
+
+```
